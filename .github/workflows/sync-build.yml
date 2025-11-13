@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
       - name: check for new upstream version
         id: check-version
         run: |
@@ -62,6 +63,7 @@ jobs:
         uses: actions/checkout@v4
         with: 
           submodules: recursive
+          fetch-depth: 0
 
       - name: Setup git bot
         run: |
@@ -72,167 +74,8 @@ jobs:
         run: |
           echo "IVPN Version requested: $IVPN_VER"
           cd desktop-app
-          git fetch --tags
-          git checkout $IVPN_VER
+          git fetch origin --tags --force
+          git checkout $IVPN_VER --force
+          git reset --hard $IVPN_VER
           cd ..
           git add desktop-app
-
-      - name: Setup Go
-        uses: buildjet/setup-go@v5
-        with:
-          go-version: "1.21"
-          cache: true
-          cache-dependency-path: |
-            **/go.mod
-            **/go.sum
-  
-      - name: Setup Node.js
-        uses: buildjet/setup-node@v4
-        with:
-          node-version: 18.x
-
-      - name: Install Apt dependencies
-        run: |
-          sudo apt update -yq
-          sudo apt-get install -yqq libiw-dev gcc libssl-dev unzip xsltproc doxygen graphviz valgrind ruby ruby-dev astyle cmake ninja-build
-
-      - name: Setup Python
-        uses: buildjet/setup-python@v5
-        with:
-          python-version: '3.10'
-
-      - name: Install Fpm
-        run: |
-          sudo gem install dotenv && sudo gem install fpm
-
-      - name: Build CLI
-        env:
-          IVPN_BUILD_SKIP_GLIBC_VER_CHECK: "1"
-        run: | 
-          cd desktop-app/cli/References/Linux
-          # flush GITHUB_ACTIONS to bypass checks in build.sh
-          GITHUB_ACTIONS= ./build.sh -v $(cat ../../../ui/package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[",]//g')
-
-      - name: Build UI
-        env:
-          IVPN_BUILD_SKIP_GLIBC_VER_CHECK: "1"
-        run: |
-          cd desktop-app/ui/References/Linux
-          # flush GITHUB_ACTIONS to bypass checks in build.sh
-          GITHUB_ACTIONS= ./build.sh -v $(cat ../../package.json | grep version | head -1 | awk -F: '{ print $2 }' | sed 's/[",]//g')
-    
-      - name: Package for release 
-        run: | 
-          # CLI & Daemon
-      
-          mkdir -p ivpn
-          mkdir -p ivpn/etc
-          cp desktop-app/daemon/References/Linux/etc/client.down ivpn/etc/
-          cp desktop-app/daemon/References/Linux/etc/client.up ivpn/etc/
-          cp desktop-app/daemon/References/Linux/etc/firewall.sh ivpn/etc/
-          cp desktop-app/daemon/References/Linux/etc/splittun.sh ivpn/etc/
-          cp desktop-app/daemon/References/common/etc/servers.json ivpn/etc/
-          cp desktop-app/daemon/References/common/etc/ca.crt ivpn/etc/
-          cp desktop-app/daemon/References/common/etc/ta.key ivpn/etc/
-          cp desktop-app/daemon/References/common/etc/dnscrypt-proxy-template.toml ivpn/etc/
-
-          mkdir -p ivpn/dnscrypt-proxy
-          cp desktop-app/daemon/References/Linux/_deps/dnscryptproxy_inst/dnscrypt-proxy ivpn/dnscrypt-proxy/
-          mkdir -p ivpn/kem
-          cp desktop-app/daemon/References/Linux/_deps/kem-helper/kem-helper-bin/kem-helper ivpn/kem/
-          mkdir -p ivpn/obfsproxy
-          cp desktop-app/daemon/References/Linux/_deps/obfs4proxy_inst/obfs4proxy ivpn/obfsproxy/
-          mkdir -p ivpn/v2ray
-          cp desktop-app/daemon/References/Linux/_deps/v2ray_inst/v2ray ivpn/v2ray/
-          mkdir -p ivpn/wireguard-tools
-          cp desktop-app/daemon/References/Linux/_deps/wireguard-tools_inst/wg ivpn/wireguard-tools/
-          cp desktop-app/daemon/References/Linux/_deps/wireguard-tools_inst/wg-quick ivpn/wireguard-tools/
-
-          cp desktop-app/daemon/References/Linux/scripts/_out_bin/ivpn-service ivpn/
-          cp desktop-app/cli/References/Linux/_out_bin/ivpn ivpn/
-          cp desktop-app/cli/References/Linux/_out_bin/ivpn.bash-completion ivpn/
-
-          # UI
-
-          mkdir -p ivpn/ui/bin
-          cp -r desktop-app/ui/dist/bin/* ivpn/ui/bin/
-          cp desktop-app/ui/References/Linux/ui/ivpnicon.svg ivpn/ui/
-          cp desktop-app/ui/References/Linux/ui/IVPN.desktop ivpn/ui/
-          
-          # tar everything up
-          tar -cjf ivpn.tar.gz ivpn
-          mkdir -p buildoutput
-          mv ivpn.tar.gz buildoutput/
-
-      - name: Process artifacts
-        run: |
-          mkdir -p buildoutput
-          mv desktop-app/cli/References/Linux/_out_bin/* buildoutput/
-          mv desktop-app/ui/References/Linux/_out_bin/* buildoutput/
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        id: artifact-upload
-        with:
-          path: buildoutput/*
-      
-      - name: Update ivpn/ivpn-ui spec file
-        run: | 
-          sed -i '0,/Version:.*/s//Version:            '$IVPN_VER_SPEC'/' ivpn.spec
-          sed -i '0,/Version:.*/s//Version:            '$IVPN_VER_SPEC'/' ivpn-ui.spec
-
-          COMMIT_MSG="Update to upstream release $IVPN_VER from https://github.com/ivpn/desktop-app/releases/tag/$IVPN_VER"
-          CHANGELOG="$(sed -n '/%changelog/,$p' ivpn.spec | sed '1d')"
-          NEW_CHANGELOG=$(echo -e "* $(date +'%a %b %d %Y') ArchitektApx <architektapx@gehinors.ch> - $IVPN_VER_SPEC\n- $COMMIT_MSG\n\n$CHANGELOG")
-
-          # replace old changelog with new one
-          sed -i '/%changelog/,$d' ivpn.spec
-          echo -e "%changelog\n$NEW_CHANGELOG" >> ivpn.spec
-          sed -i '/%changelog/,$d' ivpn-ui.spec
-          echo -e "%changelog\n$NEW_CHANGELOG" >> ivpn-ui.spec
-          git add ivpn.spec
-          git add ivpn-ui.spec
-
-      - name: Commit and Tag new version
-        id: commit-update
-        run: |
-          git commit -m "chore(ivpn): Sync/Rebuild IVPN to upstream release $IVPN_VER"
-          git tag $IVPN_VER
-          git push
-          git push --tags
-
-          # get commit sha for later use
-          echo "commit-id=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-
-  release:
-    needs: [sync-upstream, build-linux]
-    permissions:
-      contents: write
-    if: needs.sync-upstream.outputs.needs_update == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-
-
-      - name: Setup Release
-        id: setup-release
-        run: |
-          # get upstream body and write to markdown file
-          UPSTREAM_JSON=$(curl -s https://api.github.com/repos/ivpn/desktop-app/releases/latest)
-          UPSTREAM_BODY=$(echo $UPSTREAM_JSON | jq -r '.body' | sed -n '/\[Download IVPN Client/,$!p')
-          echo $UPSTREAM_BODY >> release-notes.md
-
-      - name: Publish Release
-        uses: ncipollo/release-action@v1.14.0
-        with: 
-          artifacts: artifact/*
-          tag: ${{ needs.sync-upstream.outputs.IVPN_VER }}
-          commit: ${{ needs.build-linux.outputs.commit-id }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          bodyFile: ${{ github.workspace }}/release-notes.md
-          makeLatest: true
-          skipIfReleaseExists: true          
