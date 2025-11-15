@@ -47,7 +47,7 @@ jobs:
           echo "needs_update=$NEEDS_UPDATE" >> $GITHUB_OUTPUT
 
   build-linux:
-    runs-on: buildjet-8vcpu-ubuntu-2204-arm
+    runs-on: self-hosted
     needs: [sync-upstream]
     if: needs.sync-upstream.outputs.needs_update == 'true'
     permissions:
